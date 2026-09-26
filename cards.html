@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>การ์ดดาว AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root { color-scheme: dark; --void: #05070c; --panel: #111827; --line: #232d42; --text: #ece9e0; --muted: #8f97ab; --sun: #f4b24c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--void); color: var(--text); font-family: "IBM Plex Sans Thai", system-ui, sans-serif; line-height: 1.6; padding: 28px 16px 60px; }
+  .wrap { max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; }
+  h1 { font-family: "Chakra Petch", sans-serif; font-size: clamp(28px, 5vw, 40px); margin: 0; line-height: 1.1; }
+  p { margin: 0; color: var(--muted); max-width: 70ch; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button, .btn { font: inherit; font-weight: 600; border: 0; border-radius: 12px; padding: 11px 18px; cursor: pointer; background: var(--sun); color: #1a1204; text-decoration: none; }
+  button.ghost { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: progress; }
+  button:focus-visible, .btn:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+  #status { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--muted); }
+  #status.ok { color: #8fe3a4; } #status.bad { color: #ff9d8a; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+  .grid img { width: 100%; aspect-ratio: 750 / 1050; border-radius: 12px; display: block; background: #0b1024; }
+  .tips { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; font-size: 14.5px; }
+  .tips ul { margin: 6px 0 0; padding-left: 20px; }
+
+  @media print {
+    @page { size: A4; margin: 10mm; }
+    body { background: #fff; padding: 0; }
+    .wrap > :not(.grid) { display: none !important; }
+    .grid { grid-template-columns: repeat(3, 63mm); gap: 4mm; justify-content: center; }
+    .grid img { width: 63mm; height: 88mm; border-radius: 3mm; break-inside: avoid; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div class="wrap">
+  <h1>การ์ดดาว AR</h1>
+  <p>การ์ด 9 ใบ ใบละดวง ใช้เป็น marker สำหรับแอปสแกน การ์ดดวงอาทิตย์จะแสดงทั้งระบบสุริยะ ส่วนใบอื่นแสดงดาวดวงนั้นแบบใหญ่พร้อมข้อมูล</p>
+  <div class="actions">
+    <button id="build" type="button" disabled>กำลังวาดการ์ด…</button>
+    <button id="print" class="ghost" type="button">พิมพ์การ์ด (A4)</button>
+    <a class="btn ghost" href="./" style="background:var(--panel);color:var(--text);border:1px solid var(--line)">ไปหน้าสแกน →</a>
+    <span id="status"></span>
+  </div>
+  <div class="tips">
+    <b>ขั้นตอน</b>
+    <ul>
+      <li>กด <b>“สร้าง marker”</b> เพื่อบันทึกรูปการ์ดและไฟล์ <code>targets.mind</code> ลงโฟลเดอร์ ใช้เวลาประมาณ 1–3 นาที ทำแค่ครั้งแรก หรือทำใหม่ทุกครั้งที่แก้หน้าตาการ์ด</li>
+      <li>พิมพ์การ์ดบนกระดาษด้าน หรือเปิดรูปการ์ดบนจออีกเครื่องก็ได้ ไฟล์จะชื่อ <code>card-earth.png</code> เป็นต้น</li>
+      <li>ไฟล์ <code>targets.mind</code> ทำหน้าที่เหมือน database จาก Target Manager ของ Vuforia ถ้าไม่มีไฟล์นี้ แอปสแกนจะจำการ์ดไม่ได้</li>
+    </ul>
+  </div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script type="module">
+import { BODIES, mulberry, fbm, ss, makeThumb, planetCanvas } from './planets.js';
+
+const W = 750, H = 1050;
+const grid = document.getElementById('grid'), statusEl = document.getElementById('status'), buildBtn = document.getElementById('build');
+const say = (t, cls = '') => { statusEl.textContent = t; statusEl.className = cls; };
+const tick = () => new Promise(r => setTimeout(r, 0));
+const loadImg = src => new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = src; });
+const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+
+await Promise.all([
+  document.fonts.load('700 100px "Chakra Petch"', 'ดาวอังคาร'),
+  document.fonts.load('600 30px "IBM Plex Sans Thai"', 'ดาวเคราะห์'),
+  document.fonts.load('500 30px "IBM Plex Mono"', 'EARTH'),
+]);
+
+// the card is deliberately busy (stars, nebula, text, frame): image trackers need lots of unique detail to lock on
+const GOLD = '#f4c46a';
+const SYMBOL = { sun: '☉', mercury: '☿', venus: '♀', earth: '⊕', mars: '♂', jupiter: '♃', saturn: '♄', uranus: '⛢', neptune: '♆' };
+// สีประจำวันแบบไทย สำหรับดาวที่เป็นชื่อวัน
+const DAY = { sun: ['ประจำวันอาทิตย์', '#e5484d'], mercury: ['ประจำวันพุธ', '#3dbb6a'], venus: ['ประจำวันศุกร์', '#5bb6ec'],
+  mars: ['ประจำวันอังคาร', '#ec6fb0'], jupiter: ['ประจำวันพฤหัสบดี', '#f28a2e'], saturn: ['ประจำวันเสาร์', '#9a6ae0'] };
+const ATMO = { earth: '110,170,255', venus: '255,215,140', mars: '255,150,110', uranus: '150,235,240', neptune: '100,140,255' };
+
+async function drawCard(b, i) {
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'), rnd = mulberry(1000 + i * 77), col = rgb(b.dot);
+  const cx = W / 2, cy = 410, size = b.id === 'sun' ? 470 : b.id === 'saturn' ? 660 : 440;
+
+  // deep-space ground tinted by the planet's colour
+  const bg = x.createRadialGradient(cx, cy, 40, cx, cy, 900);
+  bg.addColorStop(0, `rgb(${col.map(v => v * .28 + 10 | 0)})`); bg.addColorStop(.55, '#070a1a'); bg.addColorStop(1, '#020309');
+  x.fillStyle = bg; x.fillRect(0, 0, W, H);
+
+  // two-colour nebula
+  const NW = 150, NH = 210, nb = document.createElement('canvas'); nb.width = NW; nb.height = NH;
+  const nx = nb.getContext('2d'), img = nx.createImageData(NW, NH);
+  for (let py = 0; py < NH; py++) for (let px = 0; px < NW; px++) {
+    const n = fbm(px / 30 + i * 5, py / 30, i * 1.7, 6, 300 + i), m = fbm(px / 45, py / 45 + i * 3, 2, 4, 400 + i);
+    const a = ss(.4, .8, n), k = (py * NW + px) * 4;
+    img.data[k] = col[0] * (1 - m) + 120 * m; img.data[k + 1] = col[1] * (1 - m) + 70 * m; img.data[k + 2] = col[2] * (1 - m) + 190 * m; img.data[k + 3] = a * 165;
+  }
+  nx.putImageData(img, 0, 0);
+  x.imageSmoothingQuality = 'high'; x.drawImage(nb, 0, 0, W, H);
+
+  // milky-way dust band + stars
+  x.save(); x.translate(cx, cy); x.rotate(-.5 + i * .37);
+  for (let s = 0; s < 1400; s++) {
+    const d = (rnd() + rnd() + rnd() - 1.5) * 120;
+    x.fillStyle = `rgba(230,235,255,${.15 + rnd() * .45})`; x.fillRect((rnd() - .5) * 1600, d, 1.3, 1.3);
+  }
+  x.restore();
+  for (let s = 0; s < 650; s++) {
+    const sx = rnd() * W, sy = rnd() * H, r = Math.pow(rnd(), 7) * 3 + .5, a = .4 + rnd() * .6;
+    x.fillStyle = `rgba(240,244,255,${a})`; x.beginPath(); x.arc(sx, sy, r, 0, Math.PI * 2); x.fill();
+    if (r > 2.2) {
+      const g = x.createRadialGradient(sx, sy, 0, sx, sy, r * 6); g.addColorStop(0, `rgba(200,215,255,${a * .5})`); g.addColorStop(1, 'rgba(200,215,255,0)');
+      x.fillStyle = g; x.fillRect(sx - r * 6, sy - r * 6, r * 12, r * 12);
+      x.strokeStyle = `rgba(240,244,255,${a * .55})`; x.lineWidth = 1; x.beginPath(); x.moveTo(sx - r * 7, sy); x.lineTo(sx + r * 7, sy); x.moveTo(sx, sy - r * 7); x.lineTo(sx, sy + r * 7); x.stroke();
+    }
+  }
+
+  // halo behind the body
+  const pr = b.id === 'saturn' ? Math.round(size * .42) / 2 : size / 2;   // radius of the ball itself
+  const glow = x.createRadialGradient(cx, cy, pr * .8, cx, cy, pr * (b.id === 'sun' ? 2.1 : 1.7));
+  glow.addColorStop(0, `rgba(${col},${b.id === 'sun' ? .75 : .35})`); glow.addColorStop(1, `rgba(${col},0)`);
+  x.fillStyle = glow; x.fillRect(0, 0, W, H);
+  if (b.id === 'sun') {   // corona rays
+    x.save(); x.globalCompositeOperation = 'lighter'; x.translate(cx, cy);
+    for (let k = 0; k < 160; k++) {
+      const a = rnd() * Math.PI * 2, len = pr * (1.08 + Math.pow(rnd(), 2) * .7);
+      const g = x.createLinearGradient(0, 0, Math.cos(a) * len, Math.sin(a) * len);
+      g.addColorStop(.6, 'rgba(255,190,90,.35)'); g.addColorStop(1, 'rgba(255,150,40,0)');
+      x.strokeStyle = g; x.lineWidth = 1 + rnd() * 3; x.beginPath(); x.moveTo(0, 0); x.lineTo(Math.cos(a) * len, Math.sin(a) * len); x.stroke();
+    }
+    x.restore();
+  }
+
+  // orbit path with tick dots (back half, planet, front half)
+  const orbit = (from, to) => {
+    x.save(); x.translate(cx, cy); x.rotate(-.2);
+    x.strokeStyle = 'rgba(255,255,255,.4)'; x.lineWidth = 2; x.beginPath(); x.ellipse(0, 0, 320, 64, 0, from, to); x.stroke();
+    for (let k = 0; k < 24; k++) { const a = from + (to - from) * k / 24; x.fillStyle = GOLD; x.beginPath(); x.arc(320 * Math.cos(a), 64 * Math.sin(a), 2.5, 0, Math.PI * 2); x.fill(); }
+    x.restore();
+  };
+  if (b.id !== 'saturn') orbit(Math.PI, Math.PI * 2);
+  const pc = planetCanvas(b.id, .9);
+  x.drawImage(await loadImg(makeThumb(pc.c, b.id, size)), cx - size / 2, cy - size / 2, size, size);
+  if (ATMO[b.id]) {   // atmosphere rim
+    const g = x.createRadialGradient(cx, cy, pr * .9, cx, cy, pr * 1.12);
+    g.addColorStop(0, `rgba(${ATMO[b.id]},0)`); g.addColorStop(.45, `rgba(${ATMO[b.id]},.55)`); g.addColorStop(1, `rgba(${ATMO[b.id]},0)`);
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, pr * 1.12, 0, Math.PI * 2); x.fill();
+  }
+  if (b.id !== 'saturn') orbit(0, Math.PI);
+
+  // bottom fade so the text reads
+  const fade = x.createLinearGradient(0, 640, 0, H); fade.addColorStop(0, 'rgba(3,4,10,0)'); fade.addColorStop(.35, 'rgba(3,4,10,.75)'); fade.addColorStop(1, 'rgba(3,4,10,.95)');
+  x.fillStyle = fade; x.fillRect(0, 640, W, H - 640);
+
+  // frame: double gold line with art-deco corners
+  const gold = x.createLinearGradient(0, 0, W, H); gold.addColorStop(0, '#ffe2a0'); gold.addColorStop(.5, '#d99a2b'); gold.addColorStop(1, '#ffd98a');
+  x.strokeStyle = gold; x.lineWidth = 7; x.beginPath(); x.roundRect(20, 20, W - 40, H - 40, 30); x.stroke();
+  x.lineWidth = 2; x.beginPath(); x.roundRect(36, 36, W - 72, H - 72, 20); x.stroke();
+  for (const [fx, fy, sx, sy] of [[36, 36, 1, 1], [W - 36, 36, -1, 1], [36, H - 36, 1, -1], [W - 36, H - 36, -1, -1]]) {
+    x.save(); x.translate(fx, fy); x.scale(sx, sy); x.fillStyle = gold;
+    x.beginPath(); x.moveTo(0, 0); x.lineTo(70, 0); x.lineTo(70, 6); x.lineTo(6, 6); x.lineTo(6, 70); x.lineTo(0, 70); x.fill();
+    x.beginPath(); x.arc(22, 22, 6, 0, Math.PI * 2); x.fill();
+    x.restore();
+  }
+
+  // header: number · symbol badge · kind
+  x.textBaseline = 'middle';
+  x.font = '500 28px "IBM Plex Mono"'; x.fillStyle = GOLD; x.textAlign = 'left';
+  x.fillText(`${String(i + 1).padStart(2, '0')} / ${String(BODIES.length).padStart(2, '0')}`, 76, 96);
+  x.font = '600 25px "IBM Plex Sans Thai"'; x.fillStyle = '#e4e7f1'; x.textAlign = 'right';
+  x.fillText(b.id === 'sun' ? 'ดาวฤกษ์' : b.kind, W - 76, 96);
+  x.fillStyle = 'rgba(6,9,20,.85)'; x.strokeStyle = gold; x.lineWidth = 3;
+  x.beginPath(); x.arc(cx, 96, 36, 0, Math.PI * 2); x.fill(); x.stroke();
+  x.font = '40px "Segoe UI Symbol", "Noto Sans Symbols", "DejaVu Sans", sans-serif'; x.fillStyle = GOLD; x.textAlign = 'center';
+  x.fillText(SYMBOL[b.id], cx, 98);
+
+  // names
+  x.textBaseline = 'alphabetic'; x.textAlign = 'center';
+  x.shadowColor = 'rgba(0,0,0,.8)'; x.shadowBlur = 20;
+  x.font = `700 ${b.th.length > 8 ? 88 : 104}px "Chakra Petch"`;
+  const ng = x.createLinearGradient(0, 700, 0, 770); ng.addColorStop(0, '#ffffff'); ng.addColorStop(1, '#ffe7b8');
+  x.fillStyle = ng; x.fillText(b.th, cx, 765);
+  x.shadowBlur = 0;
+  x.font = '500 26px "IBM Plex Mono"'; x.fillStyle = `rgb(${col.map(v => Math.min(255, v + 50))})`; x.letterSpacing = '12px';
+  const en = b.en.toUpperCase(), ew = x.measureText(en).width;
+  x.fillText(en, cx + 6, 808); x.letterSpacing = '0px';
+  x.strokeStyle = 'rgba(244,196,106,.6)'; x.lineWidth = 1.5;
+  x.beginPath(); x.moveTo(cx - ew / 2 - 70, 799); x.lineTo(cx - ew / 2 - 16, 799); x.moveTo(cx + ew / 2 + 16, 799); x.lineTo(cx + ew / 2 + 70, 799); x.stroke();
+
+  // Thai day chip
+  if (DAY[b.id]) {
+    const [label, dc] = DAY[b.id];
+    x.font = '600 21px "IBM Plex Sans Thai"'; const lw = x.measureText(label).width + 50;
+    x.fillStyle = 'rgba(6,9,20,.8)'; x.strokeStyle = dc; x.lineWidth = 2;
+    x.beginPath(); x.roundRect(cx - lw / 2, 826, lw, 36, 18); x.fill(); x.stroke();
+    x.fillStyle = dc; x.beginPath(); x.arc(cx - lw / 2 + 20, 844, 6, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#f2efe6'; x.textAlign = 'left'; x.textBaseline = 'middle'; x.fillText(label, cx - lw / 2 + 34, 845);
+    x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+  }
+
+  // stats: three columns
+  const px0 = 60, pw = W - 120, py0 = 880, ph = 104;
+  x.fillStyle = 'rgba(10,14,30,.85)'; x.strokeStyle = 'rgba(244,196,106,.45)'; x.lineWidth = 2;
+  x.beginPath(); x.roundRect(px0, py0, pw, ph, 18); x.fill(); x.stroke();
+  [b.stats[0], b.stats[1], b.stats[3]].forEach(([k, v], j) => {
+    const colW = pw / 3, tx = px0 + colW * (j + .5);
+    if (j) { x.strokeStyle = 'rgba(255,255,255,.14)'; x.beginPath(); x.moveTo(px0 + colW * j, py0 + 18); x.lineTo(px0 + colW * j, py0 + ph - 18); x.stroke(); }
+    x.font = '500 19px "IBM Plex Sans Thai"'; x.fillStyle = '#9aa3b8'; x.fillText(k, tx, py0 + 40);
+    let fs = 24; x.font = `600 ${fs}px "IBM Plex Mono"`;
+    while (x.measureText(v).width > colW - 20 && fs > 15) x.font = `600 ${--fs}px "IBM Plex Mono"`;
+    x.fillStyle = '#f7f3e8'; x.fillText(v, tx, py0 + 78);
+  });
+  return c;
+}
+
+const cards = [];
+for (const [i, b] of BODIES.entries()) {
+  say(`วาดการ์ด ${i + 1}/${BODIES.length}…`); await tick();
+  const c = await drawCard(b, i);
+  const url = c.toDataURL('image/png');
+  cards.push({ b, c, url });
+  const im = new Image(); im.src = url; im.alt = `การ์ด${b.th}`; grid.appendChild(im);
+}
+say('การ์ดพร้อมแล้ว');
+buildBtn.disabled = false; buildBtn.textContent = 'สร้าง marker';
+document.getElementById('print').addEventListener('click', () => print());
+
+async function save(name, blob) {
+  const r = await fetch('/save/' + name, { method: 'POST', body: blob });
+  if (!r.ok) throw new Error('save ' + name + ' → ' + r.status);
+}
+
+buildBtn.addEventListener('click', async () => {
+  buildBtn.disabled = true;
+  try {
+    say('กำลังโหลดตัวสร้าง marker…');
+    const mod = await import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js');
+    const Compiler = mod.Compiler || window.MINDAR?.IMAGE?.Compiler;
+    if (!Compiler) throw new Error('ไม่พบ MindAR Compiler');
+    const images = await Promise.all(cards.map(k => loadImg(k.url)));
+    const compiler = new Compiler();
+    await compiler.compileImageTargets(images, p => say(`กำลังวิเคราะห์ลายการ์ด ${p.toFixed(0)}%`));
+    const data = await compiler.exportData();
+    const blob = new Blob([data]);
+    try {
+      say('กำลังบันทึกไฟล์…');
+      for (const k of cards) await save(`card-${k.b.id}.png`, await (await fetch(k.url)).blob());
+      await save('targets.mind', blob);
+      say('✓ บันทึก targets.mind และรูปการ์ด 9 ใบลงโฟลเดอร์แล้ว', 'ok');
+    } catch (e) {
+      // opened without server.py: hand the file over as a normal download instead
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'targets.mind'; a.click();
+      say('ดาวน์โหลด targets.mind แล้ว วางไฟล์ไว้ในโฟลเดอร์เดียวกับ index.html', 'ok');
+    }
+  } catch (e) {
+    console.error(e); say('สร้างไม่สำเร็จ: ' + (e.message || e), 'bad');
+  }
+  buildBtn.disabled = false;
+});
+</script>
+</body>
+</html>
