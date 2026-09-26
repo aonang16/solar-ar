@@ -436,6 +436,23 @@ function buildScene(MindARThree) {
 
 /* ---------------- scan flow ---------------- */
 const loadText = t => { $('loadText').textContent = t; };
+
+// ask for the camera ourselves first: MindAR hides the real reason when it fails
+const IN_APP = /Line\/|FBAN|FBAV|Instagram|MicroMessenger|TikTok|; wv\)/i.test(navigator.userAgent);
+async function checkCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error('NO_API'), { name: 'NO_API' });
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  stream.getTracks().forEach(t => t.stop());
+}
+function cameraHelp(e) {
+  const name = e?.name || e?.message || '';
+  if (e?.message === 'NO_TARGETS') return 'ยังไม่มีไฟล์ marker (targets.mind) เปิดหน้าการ์ดแล้วกด “สร้าง marker” ก่อน';
+  if (IN_APP || name === 'NO_API') return 'แอปที่เปิดลิงก์นี้อยู่ (เช่น LINE หรือ Facebook) ไม่ยอมให้ใช้กล้อง<br><b>กด ⋮ หรือ ⋯ มุมจอ แล้วเลือก “เปิดใน Chrome” หรือ “เปิดในเบราว์เซอร์”</b>';
+  if (name === 'NotAllowedError') return 'กล้องถูกปิดสิทธิ์ไว้<br><b>แตะไอคอนแม่กุญแจ 🔒 ข้างลิงก์ด้านบน → สิทธิ์ → กล้อง → อนุญาต</b> แล้วกด “ลองใหม่”';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'ไม่พบกล้องในเครื่องนี้';
+  if (name === 'NotReadableError') return 'กล้องถูกแอปอื่นใช้อยู่ ปิดแอปกล้องหรือวิดีโอคอลก่อน แล้วกด “ลองใหม่”';
+  return 'เปิดกล้องไม่ได้ ลองเปิดลิงก์นี้ใน Chrome แล้วกดอนุญาตให้ใช้กล้อง';
+}
 function setStatus(ok, text) { $('status').classList.toggle('ok', ok); $('statusText').textContent = text; }
 
 async function startScan() {
@@ -451,14 +468,15 @@ async function startScan() {
       const { MindARThree } = await import('mindar-image-three');
       buildScene(MindARThree);
     }
+    loadText('กำลังขอใช้กล้อง…');
+    await checkCamera();
     loadText('กำลังเปิดกล้อง…');
     await mindar.start();
   } catch (e) {
     console.error(e);
-    $('scanLoading').innerHTML = `<div style="font-size:40px">📷</div><p>${e?.message === 'NO_TARGETS'
-      ? 'ยังไม่มีไฟล์ marker (targets.mind) เปิดหน้าการ์ดแล้วกด “สร้าง marker” ก่อน'
-      : 'เปิดกล้องไม่ได้ ต้องเปิดแอปผ่าน https (หรือ localhost บนคอม) และกดอนุญาตให้ใช้กล้อง'}</p>
-      <button class="cta" type="button" onclick="history.back()">กลับหน้าหลัก</button>`;
+    $('scanLoading').innerHTML = `<div style="font-size:40px">📷</div><p>${cameraHelp(e)}</p>
+      <button class="cta" type="button" onclick="location.reload()">ลองใหม่</button>
+      <button class="btn" type="button" style="padding:0 20px" onclick="history.back()">กลับหน้าหลัก</button>`;
     return;
   }
   $('scanLoading').hidden = true;
